@@ -1,44 +1,116 @@
-from aws_cdk import (
-    core as cdk,
-    aws_s3 as s3,
-    aws_kms as kms,
-)
+# from aws_cdk import (
+#     Stack,
+#     RemovalPolicy,
+#     aws_s3 as s3,
+#     aws_lambda as _lambda,
+#     aws_iam as iam,
+#     Duration
+# )
+# from constructs import Construct
 
-class S3BucketStack(cdk.Stack):
-    def __init__(self, scope: cdk.Construct, id: str, **kwargs) -> None:
+# class MyCdkProjectStack(Stack):
+#     def __init__(self, scope: Construct, id: str, **kwargs):
+#         super().__init__(scope, id, **kwargs)
+
+#         # Example S3 Bucket with removal policy
+#         bucket = s3.Bucket(
+#             self, "MyBucket",
+#             removal_policy=RemovalPolicy.DESTROY  # Corrected reference
+#         )
+
+#         # Example Lambda function with IAM role
+#         lambda_role = iam.Role(
+#             self, "MyLambdaRole",
+#             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com")
+#         )
+
+#         _lambda.Function(
+#             self, "MyLambdaFunction",
+#             runtime=_lambda.Runtime.PYTHON_3_8,
+#             handler="lambda.handler",
+#             code=_lambda.Code.from_asset("lambda"),
+#             environment={
+#                 "BUCKET_NAME": bucket.bucket_name
+#             },
+#             role=lambda_role
+#         )
+
+from aws_cdk import (
+    Stack,
+    RemovalPolicy,
+    aws_s3 as s3,
+    aws_iam as iam,
+    aws_ec2 as ec2,
+    aws_lambda as _lambda,
+    Duration
+)
+from constructs import Construct
+
+class MyCdkProjectStack(Stack):
+    def __init__(self, scope: Construct, id: str, **kwargs):
         super().__init__(scope, id, **kwargs)
 
-        # Create a KMS key for encryption
-        kms_key = kms.Key(
-            self, "BucketKey",
-            enable_key_rotation=True
+        # Step 1: Create the S3 bucket
+        bucket = s3.Bucket(
+            self, "MyBucket",
+            removal_policy=RemovalPolicy.DESTROY
         )
 
-        # Create the S3 bucket
-        bucket = s3.Bucket(
-            self, "MySecureBucket",
-            bucket_name="mybucketcreationfromthecdk-6203",  # Replace with your desired name
-            versioned=True,
-            encryption=s3.BucketEncryption.KMS,
-            encryption_key=kms_key,
-            lifecycle_rules=[
-                s3.LifecycleRule(
-                    transitions=[
-                        s3.Transition(
-                            storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=cdk.Duration.days(30)
-                        ),
-                        s3.Transition(
-                            storage_class=s3.StorageClass.GLACIER,
-                            transition_after=cdk.Duration.days(90)
-                        )
-                    ]
-                )
-            ]
+        # Step 2: Create a VPC (required for EC2 instance)
+        vpc = ec2.Vpc(self, "MyVpc", max_azs=2)
+
+        # Step 3: Create an EC2 instance
+        instance_role = iam.Role(
+            self, "MyInstanceRole",
+            assumed_by=iam.ServicePrincipal("ec2.amazonaws.com")
         )
-        
-        # Output the bucket name
-        cdk.CfnOutput(
-            self, "BucketNameOutput",
-            value=bucket.bucket_name
+
+        # Grant the EC2 instance permissions to access the S3 bucket
+        bucket.grant_read_write(instance_role)
+
+        # Attach an Amazon SSM managed policy for easier instance management
+        instance_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name("AmazonSSMManagedInstanceCore")
+        )
+
+        # User data script to configure the EC2 instance
+        user_data = ec2.UserData.for_linux()
+        user_data.add_commands(
+            "#!/bin/bash",
+            "sudo yum update -y",
+            "sudo yum install -y nginx",
+            "sudo systemctl enable nginx",
+            "sudo systemctl start nginx",
+            "echo 'Welcome to NGINX on EC2' > /usr/share/nginx/html/index.html",
+            "hostnamectl set-hostname MyCustomHostname"
+        )
+
+        # Launch the EC2 instance
+        instance = ec2.Instance(
+            self, "MyInstance",
+            instance_type=ec2.InstanceType("t2.micro"),
+            machine_image=ec2.MachineImage.latest_amazon_linux(),
+            vpc=vpc,
+            role=instance_role,
+            user_data=user_data
+        )
+
+        # Step 4: Optional integration of the S3 bucket with EC2 instance
+        # (Instance can access the S3 bucket directly via AWS CLI or SDK)
+
+        # Example Lambda function with S3 bucket environment variable
+        lambda_role = iam.Role(
+            self, "MyLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com")
+        )
+
+        _lambda.Function(
+            self, "MyLambdaFunction",
+            runtime=_lambda.Runtime.PYTHON_3_8,
+            handler="lambda.handler",
+            code=_lambda.Code.from_asset("lambda"),
+            environment={
+                "BUCKET_NAME": bucket.bucket_name
+            },
+            role=lambda_role
         )
